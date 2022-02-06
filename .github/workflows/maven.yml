@@ -1,0 +1,101 @@
+name: Build AJDT
+
+on:
+  workflow_dispatch:
+    inputs:
+      testMode:
+        type: choice
+        description: Test mode
+        required: true
+        default: 'skip tests'
+        options:
+          - 'skip tests'
+          - 'run tests'
+          - 'run more tests, fail at end'
+          - 'run all tests, ignore failures'
+  push:
+    branches:
+      - '*'
+      - '!gh-pages'
+  pull_request:
+    branches:
+      - '*'
+      - '!gh-pages'
+
+jobs:
+  build:
+
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macOS-latest ]
+        # Tycho only supports LTS, other Java releases only short-term
+        java: [ 11, 17 ]
+      fail-fast: false
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+
+      - name: Set Git options
+        # Check out as-is, commit Unix-style line endings
+        run: git config --global core.autocrlf input
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Set up cache for ~./m2/repository
+        uses: actions/cache@v2.1.7
+        with:
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/org/eclipse/ajdt
+            !~/.m2/repository/org/aspectj/ajde
+          key: maven-${{ matrix.os }}-java${{ matrix.java }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-${{ matrix.os }}-java${{ matrix.java }}-
+            maven-${{ matrix.os }}-
+
+      - name: Set up JDK
+        uses: actions/setup-java@v2.5.0
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: adopt-hotspot
+
+      - name: Print tool versions
+        run: |
+          java -version
+          mvn --batch-mode --version
+
+      - name: Build + package (no tests)
+        run: mvn --batch-mode -Pe421 -DskipTests clean verify
+
+      - name: Run tests normally, fail normally
+        if: ${{ github.event.inputs.testMode == 'run tests' }}
+        # UI tests need frame buffer on Linux
+        uses: GabrielBB/xvfb-action@v1
+        with:
+          run: mvn --batch-mode -Pe421 verify
+
+      - name: Run more tests, fail at end
+        if: ${{ github.event.inputs.testMode == 'run more tests, fail at end' }}
+        # UI tests need frame buffer on Linux
+        uses: GabrielBB/xvfb-action@v1
+        with:
+          run: mvn --batch-mode -Pe421 --fail-at-end verify
+
+      - name: Run all tests, ignore failures
+        if: ${{ github.event.inputs.testMode == 'run all tests, ignore failures' }}
+        # UI tests need frame buffer on Linux
+        uses: GabrielBB/xvfb-action@v1
+        with:
+          run: mvn --batch-mode -Pe421 -Dmaven.test.failure.ignore=true verify
+
+      - name: Generate aggregate test report
+        if: always()
+        run: mvn --batch-mode -Pe421 -Daggregate=true surefire-report:report-only
+
+      - name: Attach aggregate test report to build
+        uses: actions/upload-artifact@v2
+        with:
+          name: surefire-report-${{ matrix.os }}-java${{ matrix.java }}
+          path: target/site/surefire-report.html
