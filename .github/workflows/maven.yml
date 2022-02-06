@@ -95,6 +95,7 @@ jobs:
         run: mvn --batch-mode -Pe421 -Daggregate=true surefire-report:report-only
 
       - name: Attach aggregate test report to build
+        if: always()
         uses: actions/upload-artifact@v2
         with:
           name: surefire-report-${{ matrix.os }}-java${{ matrix.java }}
